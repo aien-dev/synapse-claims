@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "name": "synapse-claims",
+  "purpose": "Signed append-only claims ledger for AI lanes: who holds which repo, branch, PR, path or external target, with conflict refusal, leases, state transitions and verifiable hash chain",
+  "layer": "coordination",
+  "invariants": [
+    "claims.jsonl is append-only; every append happens under LOCK_EX with conflicts re-checked under the lock",
+    "every event is hash-chained and Ed25519-signed; verify reports the first broken seq",
+    "stdout is JSONL only; human text goes to stderr"
+  ],
+  "extensions": {
+    "map": {
+      "parent": "aien-dev/synapse@099a980fedab8a6797bbf0358b8c5502c8045142",
+      "parent_status": "CONFIRMED"
+    }
+  }
+}

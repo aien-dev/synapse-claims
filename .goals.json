@@ -1,0 +1,8 @@
+{"schema":"goals/v1","project":"synapse-claims","goals":[
+{"id":"g1","title":"Ledger: canonical event lines, seq + prev hash chain, claim id from hash, single-write append under LOCK_EX with fdsync","status":"implemented"},
+{"id":"g2","title":"claim/renew/release/state/expire with conflict refusal (exit 2), holder checks (exit 4), --import","status":"implemented"},
+{"id":"g3","title":"who/list/conflicts readers under LOCK_SH, --agent-prefix lane filter","status":"implemented"},
+{"id":"g4","title":"verify: seq, prev, hash, claim id and batched Ed25519 signatures; first failing seq","status":"implemented"},
+{"id":"g5","title":"Replace the INTERIM Rust signer with Ed25519 in seeded Omega (docs/EXTENSION-PROPOSALS.md)","status":"pending"},
+{"id":"g6","title":"Live ledger on the Spark replacing free-text BOARD.md appends","status":"pending"}
+]}
