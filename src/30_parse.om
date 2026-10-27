@@ -1,0 +1,410 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Strict ledger-line scanner. A line is accepted only in the exact canonical form this tool writes
+note (fixed key order, no spaces, canonical escapes), so "parse ok" also means "re-serialises to itself".
+note Results go to gp cells (offsets into the line); the cursor is gp[ppos], the line length gp[pln].
+
+const qseq ulong 0
+const qts ulong 1
+const qop ulong 2
+const qid ulong 3
+const qag ulong 4
+const qagl ulong 5
+const qse ulong 6
+const qsel ulong 7
+const qkind ulong 8
+const qtg ulong 9
+const qtgl ulong 10
+const qmode ulong 11
+const qttl ulong 12
+const qexp ulong 13
+const qst ulong 14
+const qin ulong 15
+const qinl ulong 16
+const qev ulong 17
+const qevl ulong 18
+const qor ulong 19
+const qorl ulong 20
+const qprev ulong 21
+const qhpos ulong 22
+const qhash ulong 23
+const qsig ulong 24
+const ppos ulong 30
+const pln ulong 31
+const pso ulong 32
+const psl ulong 33
+
+text kv "{\"v\":1,\"seq\":"
+text kts ",\"ts\":"
+text kop ",\"op\":"
+text kid ",\"id\":"
+text kag ",\"agent\":"
+text kse ",\"session\":"
+text kkind ",\"kind\":"
+text ktg ",\"target\":"
+text kmode ",\"mode\":"
+text kttl ",\"ttl_s\":"
+text kexp ",\"expires\":"
+text kst ",\"state\":"
+text kin ",\"intent\":"
+text kev ",\"evidence\":["
+text kor ",\"origin\":"
+text kprev ",\"prev\":"
+text khash ",\"hash\":"
+text ksig ",\"sig\":"
+
+fn sc_at s edit uchar * to ulong
+p = get gp ppos
+if ge p get gp pln
+ret 256
+end
+ret ulong get s p
+end
+
+fn sc_adv k ulong to void
+put gp ppos add get gp ppos k
+end
+
+fn sc_lit s edit uchar * t view uchar * to bool
+p = get gp ppos
+if gt add p len t get gp pln
+ret false
+end
+for i ulong len t
+if ne get s add p i get t i
+ret false
+end
+end
+sc_adv len t
+ret true
+end
+
+note sc_uint: 1..19 digits, no leading zero (except "0"); value or tbad
+fn sc_uint s edit uchar * to ulong
+v = ulong 0
+k = ulong 0
+while true bound 25
+c = sc_at s
+if or lt c 48 gt c 57
+break
+end
+if and eq k 1 eq v 0
+ret tbad
+end
+if ge k 19
+ret tbad
+end
+v = add mul v 10 sub c 48
+k = add k 1
+sc_adv 1
+end
+if eq k 0
+ret tbad
+end
+ret v
+end
+
+note sc_sf: quoted safe string (sf_ok charset, 1..256) -> gp[pso], gp[psl]
+fn sc_sf s edit uchar * to bool
+if ne sc_at s 34
+ret false
+end
+sc_adv 1
+st = get gp ppos
+k = ulong 0
+while true bound 300
+c = sc_at s
+if eq c 34
+break
+end
+if or or lt c 33 gt c 126 eq c 92
+ret false
+end
+if ge k 256
+ret false
+end
+k = add k 1
+sc_adv 1
+end
+if eq k 0
+ret false
+end
+sc_adv 1
+put gp pso st
+put gp psl k
+ret true
+end
+
+note sc_txt: quoted JSON string in this tool's canonical escaping (\" \\ \n \t \r, other controls
+note \u00xx lowercase); raw bytes >= 0x20 except quote/backslash. Span (escaped) -> gp[pso], gp[psl].
+fn sc_txt s edit uchar * to bool
+if ne sc_at s 34
+ret false
+end
+sc_adv 1
+st = get gp ppos
+while true bound 70000
+c = sc_at s
+if eq c 256
+ret false
+end
+if eq c 34
+put gp pso st
+put gp psl sub get gp ppos st
+sc_adv 1
+ret true
+end
+if lt c 32
+ret false
+end
+if eq c 92
+sc_adv 1
+d = sc_at s
+if or or or eq d 34 eq d 92 eq d 110 or eq d 116 eq d 114
+sc_adv 1
+continue
+end
+if ne d 117
+ret false
+end
+sc_adv 1
+if eq sc_lit s tu00 false
+ret false
+end
+h = sc_at s
+sc_adv 1
+l = sc_at s
+sc_adv 1
+if or gt h 49 lt h 48
+ret false
+end
+if eq hexv uchar and l 255 16
+ret false
+end
+if gt l 255
+ret false
+end
+x = add mul sub h 48 16 hexv uchar l
+if or or eq x 10 eq x 9 eq x 13
+ret false
+end
+continue
+end
+sc_adv 1
+end
+ret false
+end
+
+text tu00 "00"
+
+note sc_hex: quoted string of exactly k lowercase hex digits -> offset of first digit
+fn sc_hex s edit uchar * k ulong to ulong
+if ne sc_at s 34
+ret tbad
+end
+sc_adv 1
+st = get gp ppos
+for i ulong k
+c = sc_at s
+if gt c 255
+ret tbad
+end
+if eq hexv uchar c 16
+ret tbad
+end
+sc_adv 1
+end
+if ne sc_at s 34
+ret tbad
+end
+sc_adv 1
+ret st
+end
+
+note sc_word: quoted word from wall[base .. base+cnt) -> its wall index, or tbad
+fn sc_word s edit uchar * base ulong cnt ulong to ulong
+if eq sc_sf s false
+ret tbad
+end
+ret tw_find s get gp pso get gp psl wall base cnt
+end
+
+fn sc_ts s edit uchar * to ulong
+if ne sc_at s 34
+ret tbad
+end
+sc_adv 1
+p = get gp ppos
+if gt add p 21 get gp pln
+ret tbad
+end
+v = ts_parse s p
+if eq v tbad
+ret tbad
+end
+sc_adv 20
+if ne sc_at s 34
+ret tbad
+end
+sc_adv 1
+ret v
+end
+
+note evidence list after `"evidence":[`: zero or more sf strings joined by commas, then `]`
+fn sc_evl s edit uchar * to bool
+st = get gp ppos
+if eq sc_at s 93
+put gp qev st
+put gp qevl 0
+sc_adv 1
+ret true
+end
+while true bound 70000
+if eq sc_sf s false
+ret false
+end
+c = sc_at s
+if eq c 93
+put gp qev st
+put gp qevl sub get gp ppos st
+sc_adv 1
+ret true
+end
+if ne c 44
+ret false
+end
+sc_adv 1
+end
+ret false
+end
+
+fn sc_put q ulong v ulong to bool
+put gp q v
+ret ne v tbad
+end
+
+fn sc_sfk s edit uchar * t view uchar * q ulong to bool
+if eq sc_lit s t false
+ret false
+end
+if eq sc_sf s false
+ret false
+end
+put gp q get gp pso
+put gp add q 1 get gp psl
+ret true
+end
+
+note pl_head: v .. ttl_s
+fn pl_head s edit uchar * to bool
+if eq sc_lit s kv false
+ret false
+end
+if eq sc_put qseq sc_uint s false
+ret false
+end
+if eq sc_lit s kts false
+ret false
+end
+if eq sc_put qts sc_ts s false
+ret false
+end
+if eq sc_lit s kop false
+ret false
+end
+if eq sc_put qop sc_word s 0 5 false
+ret false
+end
+if eq sc_lit s kid false
+ret false
+end
+if eq sc_put qid sc_hex s 16 false
+ret false
+end
+if eq sc_sfk s kag qag false
+ret false
+end
+if eq sc_sfk s kse qse false
+ret false
+end
+if eq sc_lit s kkind false
+ret false
+end
+if eq sc_put qkind sc_word s 13 5 false
+ret false
+end
+if eq sc_sfk s ktg qtg false
+ret false
+end
+if eq sc_lit s kmode false
+ret false
+end
+if eq sc_put qmode sc_word s 18 2 false
+ret false
+end
+if eq sc_lit s kttl false
+ret false
+end
+ret sc_put qttl sc_uint s
+end
+
+note pl_line: whole-line scan; true when s[0..n) is a canonical event line
+fn pl_line s edit uchar * n ulong to bool
+put gp ppos 0
+put gp pln n
+if eq pl_head s false
+ret false
+end
+if eq sc_lit s kexp false
+ret false
+end
+if eq sc_put qexp sc_ts s false
+ret false
+end
+if eq sc_lit s kst false
+ret false
+end
+if eq sc_put qst sc_word s 5 8 false
+ret false
+end
+if eq sc_lit s kin false
+ret false
+end
+if eq sc_txt s false
+ret false
+end
+put gp qin get gp pso
+put gp qinl get gp psl
+if eq sc_lit s kev false
+ret false
+end
+if eq sc_evl s false
+ret false
+end
+if eq sc_sfk s kor qor false
+ret false
+end
+if eq sc_lit s kprev false
+ret false
+end
+if eq sc_put qprev sc_hex s 64 false
+ret false
+end
+put gp qhpos get gp ppos
+if eq sc_lit s khash false
+ret false
+end
+if eq sc_put qhash sc_hex s 64 false
+ret false
+end
+if eq sc_lit s ksig false
+ret false
+end
+if eq sc_put qsig sc_hex s 128 false
+ret false
+end
+if ne sc_at s 125
+ret false
+end
+sc_adv 1
+ret eq get gp ppos n
+end

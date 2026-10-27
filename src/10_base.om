@@ -1,0 +1,365 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note synapse-claims (aien-dev/synapse-claims): append-only, hash-chained, signed lease ledger for AI lanes.
+note Unit = om2 line + om/tls/sha2.om + src/*.om (build.sh). This file: capacities, global state, buffered
+note output, the string arena, word tables, decimal and hex helpers, die.
+
+const lncap ulong 65536
+const ncl ulong 131072
+const nf ulong 24
+const arcap ulong 33554432
+const pecap ulong 8388608
+const outcap ulong 524288
+const errcap ulong 8192
+const socap ulong 1048576
+const sicap ulong 1048576
+const htmask ulong 262143
+const evcap ulong 65536
+const tbad ulong 18446744073709551615
+
+note gx cells (scalar state)
+const xoutn ulong 0
+const xerrn ulong 1
+const xsel ulong 2
+const xarn ulong 3
+const xnc ulong 4
+const xseq ulong 5
+const xnow ulong 6
+const xpkn ulong 7
+const xson ulong 8
+const xsin ulong 9
+const xmfd ulong 10
+const xpen ulong 11
+const xpec ulong 12
+const xlfd ulong 13
+const xlkfd ulong 14
+const xlp ulong 15
+const xrfd ulong 16
+const xrpos ulong 17
+const xrlen ulong 18
+const xreof ulong 19
+const xhome ulong 20
+const xhomel ulong 21
+const xpled ulong 22
+const xpledl ulong 23
+const xplk ulong 24
+const xplkl ulong 25
+const xpkey ulong 26
+const xpkeyl ulong 27
+const xppub ulong 28
+const xppubl ulong 29
+const xpkd ulong 30
+const xpkdl ulong 31
+const xsig ulong 32
+const xsigl ulong 33
+const xevn ulong 34
+const xbad ulong 35
+const xwhy ulong 36
+const xcmd ulong 37
+const xall ulong 38
+const xnowset ulong 39
+const xidv ulong 40
+const xttl ulong 41
+const xmode ulong 42
+const xstate ulong 43
+const xpos ulong 44
+const xkind ulong 45
+
+global gout uchar 524288
+global gerr uchar 8192
+global gar uchar 33554432
+global gcl ulong 3145728
+global ght ulong 262144
+global ghk ulong 262144
+global gpend uchar 8388608
+global gpe ulong 8192
+global gso uchar 1048576
+global gsi uchar 1048576
+global grd uchar 65536
+global gpk uchar 4096
+global glh uchar 64
+global gtb uchar 32
+global gst uchar 64
+global gevb uchar 16384
+global gx ulong 64
+global gp ulong 64
+global gop ulong 64
+global gev ulong 32
+global gfd uchar 8
+global gws uchar 4
+
+note word tables: index = position of the space-separated word
+note wall: ops 0..4 (code-1), states 5..12 (code+4), kinds 13..17 (code+12), modes 18 excl 19 shared
+text wall "claim renew release state expire PROPOSED IMPLEMENTED EXERCISED QUALIFIED MERGED DEPLOYED NOT_RUN BLOCKED repo branch path pr ext excl shared"
+text wreason "same_target repo_covers path_overlap ext_casefold"
+text wcmds "init claim renew release state who list conflicts verify expire"
+text wflags "--home --now --sig-bin --agent --session --target --ttl --mode --state --intent --evidence --import --id --all --text"
+text wwhy "malformed seq prev hash id signature"
+
+text tpref "synapse-claims: "
+text tjerr "{\"ok\":false,\"error\":\""
+text tjend "\"}\n"
+text ttrue "true"
+text tfalse "false"
+
+note ======== word tables ========
+
+fn tw_off t view uchar * w ulong to ulong
+k = ulong 0
+p = ulong 0
+while lt p len t bound 999999
+if eq k w
+ret p
+end
+if eq get t p 32
+k = add k 1
+end
+p = add p 1
+end
+ret p
+end
+
+fn tw_len t view uchar * w ulong to ulong
+s = tw_off t w
+e = s
+while lt e len t bound 999999
+if eq get t e 32
+ret sub e s
+end
+e = add e 1
+end
+ret sub e s
+end
+
+note tw_find: index of the word in t[base .. base+cnt) equal to s[o .. o+l), or tbad
+fn tw_find s edit uchar * o ulong l ulong t view uchar * base ulong cnt ulong to ulong
+for k ulong cnt
+w = add base k
+p = tw_off t w
+if eq tw_len t w l
+eqv = true
+for i ulong l
+if ne get s add o i get t add p i
+eqv = false
+break
+end
+end
+if eqv
+ret w
+end
+end
+end
+ret tbad
+end
+
+note ======== buffered output: xsel 0 stdout (gout), 1 stderr (gerr) ========
+
+fn o_flush to void
+n = get gx xoutn
+p = ulong 0
+while lt p n bound 999999
+w = write 1 gout p sub n p
+if le w 0
+exit 70
+end
+p = add p ulong w
+end
+put gx xoutn 0
+end
+
+fn e_flush to void
+n = get gx xerrn
+p = ulong 0
+while lt p n bound 999999
+w = write 2 gerr p sub n p
+if le w 0
+break
+end
+p = add p ulong w
+end
+put gx xerrn 0
+end
+
+fn o_b c uchar to void
+if eq get gx xsel 1
+m = get gx xerrn
+if lt m errcap
+put gerr m c
+put gx xerrn add m 1
+end
+ret
+end
+if ge get gx xoutn outcap
+o_flush
+end
+n = get gx xoutn
+put gout n c
+put gx xoutn add n 1
+end
+
+fn o_t t view uchar * to void
+for i ulong len t
+o_b get t i
+end
+end
+
+fn o_wd t view uchar * w ulong to void
+p = tw_off t w
+for i ulong tw_len t w
+o_b get t add p i
+end
+end
+
+fn o_ar off ulong n ulong to void
+for i ulong n
+o_b get gar add off i
+end
+end
+
+fn o_u v ulong to void
+x = v
+k = ulong 0
+for i ulong 20
+put gst i uchar add 48 rem x 10
+x = div x 10
+k = add k 1
+if eq x 0
+break
+end
+end
+for j ulong k
+o_b get gst sub sub k j 1
+end
+end
+
+note o_key: writes ,"KEY": (first true: {"KEY":)
+fn o_key t view uchar * first bool to void
+if first
+o_b 123
+else
+o_b 44
+end
+o_b 34
+o_t t
+o_b 34
+o_b 58
+end
+
+fn o_q to void
+o_b 34
+end
+
+note die: {"ok":false,"error":"T"} on stdout, `synapse-claims: T` on stderr, exit code
+fn die code int t view uchar * to void
+o_t tjerr
+o_t t
+o_t tjend
+o_flush
+put gx xsel 1
+o_t tpref
+o_t t
+o_b 10
+e_flush
+exit code
+end
+
+note ======== arena ========
+
+fn ar_b c uchar to void
+n = get gx xarn
+if ge n arcap
+die 70 mfull
+end
+put gar n c
+put gx xarn add n 1
+end
+
+fn ar_t t view uchar * to ulong
+s = get gx xarn
+for i ulong len t
+ar_b get t i
+end
+ret s
+end
+
+fn ar_ln s edit uchar * off ulong n ulong to ulong
+st = get gx xarn
+for i ulong n
+ar_b get s add off i
+end
+ret st
+end
+
+fn ar_cp off ulong n ulong to ulong
+st = get gx xarn
+for i ulong n
+ar_b get gar add off i
+end
+ret st
+end
+
+fn ar_eq a ulong an ulong b ulong bn ulong to bool
+if ne an bn
+ret false
+end
+for i ulong an
+if ne get gar add a i get gar add b i
+ret false
+end
+end
+ret true
+end
+
+fn lower c uchar to uchar
+if and ge c 65 le c 90
+ret add c 32
+end
+ret c
+end
+
+fn ar_eqci a ulong an ulong b ulong bn ulong to bool
+if ne an bn
+ret false
+end
+for i ulong an
+if ne lower get gar add a i lower get gar add b i
+ret false
+end
+end
+ret true
+end
+
+fn hexd v ulong to uchar
+if lt v 10
+ret uchar add v 48
+end
+ret uchar add v 87
+end
+
+fn hexv c uchar to ulong
+if and ge c 48 le c 57
+ret ulong sub c 48
+end
+if and ge c 97 le c 102
+ret ulong sub c 87
+end
+ret 16
+end
+
+note sf_ok: 1..256 bytes, each 0x21..0x7e except quote and backslash (identifiers, targets, URLs)
+fn sf_ok s edit uchar * n ulong to bool
+if or eq n 0 gt n 256
+ret false
+end
+for i ulong n
+c = get s i
+if or lt c 33 gt c 126
+ret false
+end
+if or eq c 34 eq c 92
+ret false
+end
+end
+ret true
+end
+
+text mfull "arena full"

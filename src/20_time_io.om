@@ -1,0 +1,308 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Time (UTC civil <-> Unix seconds, days algorithms of H. Hinnant "chrono-Compatible Low-Level Date
+note Algorithms"), the bounded line reader, and the child-process runner for synapse-claims-sig.
+
+note ======== time ========
+
+fn t_days y ulong m ulong d ulong to ulong
+yy = y
+if le m 2
+yy = sub y 1
+end
+era = div yy 400
+yoe = sub yy mul era 400
+mm = add m 9
+if gt m 2
+mm = sub m 3
+end
+doy = add div add mul 153 mm 2 5 sub d 1
+doe = add sub add mul yoe 365 div yoe 4 div yoe 100 doy
+ret sub add mul era 146097 doe 719468
+end
+
+note t_civ: days since 1970-01-01 -> y*10000 + m*100 + d
+fn t_civ days ulong to ulong
+z = add days 719468
+era = div z 146097
+doe = sub z mul era 146097
+yoe = div sub add sub doe div doe 1460 div doe 36524 div doe 146096 365
+y = add yoe mul era 400
+doy = sub doe sub add mul 365 yoe div yoe 4 div yoe 100
+mp = div add mul 5 doy 2 153
+d = add sub doy div add mul 153 mp 2 5 1
+m = add mp 3
+if ge mp 10
+m = sub mp 9
+end
+if le m 2
+y = add y 1
+end
+ret add add mul y 10000 mul m 100 d
+end
+
+fn tb_dig p ulong v ulong w ulong to void
+x = v
+for i ulong w
+put gtb sub sub add p w 1 i uchar add 48 rem x 10
+x = div x 10
+end
+end
+
+note ts_fmt: gtb[0..20) = YYYY-MM-DDTHH:MM:SSZ
+fn ts_fmt s ulong to void
+c = t_civ div s 86400
+r = rem s 86400
+tb_dig 0 div c 10000 4
+put gtb 4 45
+tb_dig 5 rem div c 100 100 2
+put gtb 7 45
+tb_dig 8 rem c 100 2
+put gtb 10 84
+tb_dig 11 div r 3600 2
+put gtb 13 58
+tb_dig 14 rem div r 60 60 2
+put gtb 16 58
+tb_dig 17 rem r 60 2
+put gtb 19 90
+end
+
+fn o_ts s ulong to void
+ts_fmt s
+for i ulong 20
+o_b get gtb i
+end
+end
+
+fn t_num s edit uchar * off ulong n ulong to ulong
+v = ulong 0
+for i ulong n
+c = get s add off i
+if or lt c 48 gt c 57
+ret tbad
+end
+v = add mul v 10 ulong sub c 48
+end
+ret v
+end
+
+note ts_parse: s[off..off+20) strict YYYY-MM-DDTHH:MM:SSZ, 1970..9999, round-trip exact; else tbad
+fn ts_parse s edit uchar * off ulong to ulong
+y = t_num s off 4
+m = t_num s add off 5 2
+d = t_num s add off 8 2
+hh = t_num s add off 11 2
+mi = t_num s add off 14 2
+se = t_num s add off 17 2
+if or or eq y tbad eq m tbad eq d tbad
+ret tbad
+end
+if or or eq hh tbad eq mi tbad eq se tbad
+ret tbad
+end
+if or or lt y 1970 lt m 1 gt m 12
+ret tbad
+end
+if or or lt d 1 gt d 31 ge hh 24
+ret tbad
+end
+if or ge mi 60 ge se 60
+ret tbad
+end
+v = add mul t_days y m d 86400 add add mul hh 3600 mul mi 60 se
+ts_fmt v
+for i ulong 20
+if ne get gtb i get s add off i
+ret tbad
+end
+end
+ret v
+end
+
+note ======== ledger line reader (grd chunks, fd in xrfd) ========
+
+fn r_open fd long to void
+put gx xrfd ulong fd
+put gx xrpos 0
+put gx xrlen 0
+put gx xreof 0
+end
+
+note r_line: copies the next line (without LF) into ln; returns its length, -1 at clean EOF, -2 line too
+note long, -3 read error, -4 last line not LF-terminated. Each pass consumes one byte or refills with
+note at least one byte, so 2 * 65536 + 4 passes cover the longest accepted line.
+fn r_line ln edit uchar * to long
+n = ulong 0
+while true bound 140000
+if ge get gx xrpos get gx xrlen
+if eq get gx xreof 1
+if eq n 0
+ret -1
+end
+ret -4
+end
+k = read int get gx xrfd grd 0 65536
+if lt k 0
+ret -3
+end
+if eq k 0
+put gx xreof 1
+continue
+end
+put gx xrpos 0
+put gx xrlen ulong k
+continue
+end
+c = get grd get gx xrpos
+put gx xrpos add get gx xrpos 1
+if eq c 10
+ret long n
+end
+if ge n 65535
+ret -2
+end
+put ln n c
+n = add n 1
+end
+ret -2
+end
+
+note ======== child process: packet (gpk), stdin fd, stdout captured into gso ========
+
+fn pk_reset to void
+put gpk 0 0
+put gpk 1 0
+put gx xpkn 2
+end
+
+fn pk_rec n ulong to ulong
+p = get gx xpkn
+if gt add add p n 2 4096
+die 70 mpk
+end
+put gpk p uchar and n 255
+put gpk add p 1 uchar shr n 8
+put gpk 0 add get gpk 0 1
+put gx xpkn add add p n 2
+ret add p 2
+end
+
+fn pk_ar off ulong n ulong to void
+p = pk_rec n
+for i ulong n
+put gpk add p i get gar add off i
+end
+end
+
+fn pk_t t view uchar * to void
+p = pk_rec len t
+for i ulong len t
+put gpk add p i get t i
+end
+end
+
+fn fdword off ulong to int
+x = ulong 0
+for i ulong 4
+x = or x shl ulong get gfd add off i mul i 8
+end
+ret int x
+end
+
+note run_kid: fork; child gets stdin = infd, stdout = pipe, exec gpk; parent reads the pipe to EOF into
+note gso (xson bytes) and returns the child's exit status, or -1 (spawn failure, signal, overflow).
+fn run_kid infd long to long
+r = pipefds gfd 0 8 524288
+if ne r 0
+ret -1
+end
+rd = fdword 0
+wr = fdword 4
+pid = fork
+if lt pid 0
+ret -1
+end
+if eq pid 0
+a = dupfd int infd 0 0
+b = dupfd wr 1 0
+e = execprog gpk 0 get gx xpkn
+exit 70
+end
+c = fclose wr
+n = ulong 0
+ovf = false
+while true bound 999999
+if ge n socap
+ovf = true
+k = killpid int pid 9
+break
+end
+k = read rd gso n sub socap n
+if le k 0
+break
+end
+n = add n ulong k
+end
+put gx xson n
+c = fclose rd
+r = waitpid int pid gws 0 4 0
+if ne r pid
+ret -1
+end
+if ovf
+ret -1
+end
+if ne get gws 0 0
+ret -1
+end
+ret long get gws 1
+end
+
+note ======== staging buffer gsi -> memfd (xmfd) ========
+
+text mfdname "synapse-claims-sig-in"
+
+fn si_open to void
+m = memfd mfdname 0 len mfdname 1
+if lt m 0
+die 70 mmemfd
+end
+put gx xmfd ulong m
+put gx xsin 0
+end
+
+fn si_flush to void
+n = get gx xsin
+p = ulong 0
+while lt p n bound 999999
+w = write int get gx xmfd gsi p sub n p
+if le w 0
+die 70 mmemfd
+end
+p = add p ulong w
+end
+put gx xsin 0
+end
+
+fn si_b c uchar to void
+if ge get gx xsin sicap
+si_flush
+end
+n = get gx xsin
+put gsi n c
+put gx xsin add n 1
+end
+
+note si_run: flush, rewind and run gpk with the memfd as stdin; closes the memfd
+fn si_run to long
+si_flush
+s = fseek int get gx xmfd 0 0
+if ne s 0
+die 70 mmemfd
+end
+r = run_kid long get gx xmfd
+c = fclose int get gx xmfd
+ret r
+end
+
+text mpk "argument packet too long"
+text mmemfd "memfd failure"
