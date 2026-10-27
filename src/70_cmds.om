@@ -1,0 +1,816 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Subcommands. Options live in gop as (offset, length) pairs into the argument buffer av (offset tbad
+note = absent); see 90_main.om for the slot map.
+
+const ohome ulong 0
+const onow ulong 2
+const osig ulong 4
+const oag ulong 6
+const ose ulong 8
+const otg ulong 10
+const ottl ulong 12
+const omode ulong 14
+const ost ulong 16
+const oin ulong 18
+const oev ulong 20
+const oimp ulong 22
+const oid ulong 24
+const oall ulong 26
+const oapf ulong 28
+const opos ulong 30
+const ocmd ulong 32
+const oevn ulong 33
+
+global gevl ulong 512
+
+text musage "usage: synapse-claims [--home DIR] [--now TS] [--sig-bin PATH] init|claim|renew|release|state|who|list|conflicts|verify|expire ..."
+text mmagent "missing or invalid --agent"
+text mmsess "missing or invalid --session"
+text mmtg "missing or invalid --target"
+text mmttl "invalid --ttl (1..2592000)"
+text mmmode "invalid --mode (excl|shared)"
+text mmst "invalid --state"
+text mmin "invalid --intent (UTF-8, at most 4096 bytes)"
+text mmev "invalid --evidence"
+text mmimp "invalid --import"
+text mmid "missing --id"
+text mkeyg "keygen failed (synapse-claims-sig)"
+text mpub "ledger.pub unreadable"
+text mverb "signature check failed to run (synapse-claims-sig)"
+text tcli "cli"
+text tpulse "pulse"
+text tdefag "synapse-claims"
+text timp "import:"
+text tconf "{\"ok\":false,\"error\":\"conflict\",\"holder\":"
+text tconf2 "conflict: "
+text theld " held by "
+text tuntil ") until "
+text tokid "{\"ok\":true,\"id\":\""
+text tseq "\",\"seq\":"
+text texp2 ",\"expires\":"
+text tokpub "{\"ok\":true,\"pub\":\""
+text tvok "{\"ok\":true,\"events\":"
+text thead ",\"head\":\""
+text tvbad "{\"ok\":false,\"seq\":"
+text terr2 ",\"error\":\""
+text ta "{\"a\":"
+text tb ",\"b\":"
+text treas ",\"reason\":\""
+text tdid "did:key:"
+text tokv "ok "
+text tbadv "bad "
+
+fn op_has slot ulong to bool
+ret ne get gop slot tbad
+end
+
+fn op_sf av edit uchar * slot ulong msg view uchar * to ulong
+if eq op_has slot false
+die 64 msg
+end
+o = get gop slot
+n = get gop add slot 1
+if eq sf_ok part av o n false
+die 64 msg
+end
+ret ar_ln av o n
+end
+
+note decimal option value, 1..19 digits; tbad when absent or not a number
+fn op_uint av edit uchar * slot ulong to ulong
+if eq op_has slot false
+ret tbad
+end
+o = get gop slot
+n = get gop add slot 1
+if or eq n 0 gt n 19
+ret tbad
+end
+v = ulong 0
+for i ulong n
+c = get av add o i
+if or lt c 48 gt c 57
+ret tbad
+end
+v = add mul v 10 ulong sub c 48
+end
+ret v
+end
+
+fn op_ttl av edit uchar * to ulong
+if eq op_has ottl false
+ret 3600
+end
+v = op_uint av ottl
+if or or eq v tbad eq v 0 gt v 2592000
+die 64 mmttl
+end
+ret v
+end
+
+note option word from wall[base .. base+cnt); base 18 is --mode, base 5 is --state
+fn op_word av edit uchar * slot ulong base ulong cnt ulong to ulong
+o = get gop slot
+n = get gop add slot 1
+w = tw_find part av o n wall base cnt
+if eq w tbad
+if eq base 18
+die 64 mmmode
+end
+die 64 mmst
+end
+ret sub w base
+end
+
+note UTF-8 check (RFC 3629: no overlongs, no surrogates, max U+10FFFF) of av[o..o+n)
+fn utf8_ok av edit uchar * o ulong n ulong to bool
+i = ulong 0
+while lt i n bound 5000
+c = ulong get av add o i
+k = ulong 0
+lo = ulong 128
+hi = ulong 191
+if lt c 128
+i = add i 1
+continue
+end
+if and ge c 194 le c 223
+k = 1
+end
+if and ge c 224 le c 239
+k = 2
+if eq c 224
+lo = 160
+end
+if eq c 237
+hi = 159
+end
+end
+if and ge c 240 le c 244
+k = 3
+if eq c 240
+lo = 144
+end
+if eq c 244
+hi = 143
+end
+end
+if eq k 0
+ret false
+end
+if gt add i k sub n 1
+ret false
+end
+for j ulong k
+d = ulong get av add add o i add j 1
+if eq j 0
+if or lt d lo gt d hi
+ret false
+end
+else
+if or lt d 128 gt d 191
+ret false
+end
+end
+end
+i = add add i k 1
+end
+ret true
+end
+
+note intent: JSON-escaped copy in the arena (offset; length in gx xpos); empty when absent
+fn op_intent av edit uchar * to ulong
+st = get gx xarn
+put gx xpos 0
+if eq op_has oin false
+ret st
+end
+o = get gop oin
+n = get gop add oin 1
+if gt n 4096
+die 64 mmin
+end
+if eq utf8_ok av o n false
+die 64 mmin
+end
+for i ulong n
+c = get av add o i
+if or eq c 34 eq c 92
+ar_b 92
+ar_b c
+continue
+end
+if eq c 10
+ar_b 92
+ar_b 110
+continue
+end
+if eq c 9
+ar_b 92
+ar_b 116
+continue
+end
+if eq c 13
+ar_b 92
+ar_b 114
+continue
+end
+if lt c 32
+ar_b 92
+ar_b 117
+ar_b 48
+ar_b 48
+ar_b hexd ulong shr c 4
+ar_b hexd ulong and c 15
+continue
+end
+ar_b c
+end
+put gx xpos sub get gx xarn st
+ret st
+end
+
+note evidence: `"u1","u2"` in the arena (offset; length in gx xpos)
+fn op_evid av edit uchar * to ulong
+st = get gx xarn
+for i ulong get gop oevn
+o = get gevl mul i 2
+n = get gevl add mul i 2 1
+if eq sf_ok part av o n false
+die 64 mmev
+end
+if gt i 0
+ar_b 44
+end
+ar_b 34
+ar_ln av o n
+ar_b 34
+end
+put gx xpos sub get gx xarn st
+ret st
+end
+
+note origin: "cli" | "import:" ORIGIN (prefix kept when already present)
+fn op_origin av edit uchar * to ulong
+if eq op_has oimp false
+st = ar_t tcli
+put gx xpos len tcli
+ret st
+end
+o = get gop oimp
+n = get gop add oimp 1
+if eq sf_ok part av o n false
+die 64 mmimp
+end
+st = get gx xarn
+pre = false
+if ge n len timp
+pre = true
+for i ulong len timp
+if ne get av add o i get timp i
+pre = false
+end
+end
+end
+if eq pre false
+ar_t timp
+end
+ar_ln av o n
+put gx xpos sub get gx xarn st
+if gt get gx xpos 256
+die 64 mmimp
+end
+ret st
+end
+
+fn o_ok id ulong seq ulong ex ulong to void
+o_t tokid
+o_id id
+o_t tseq
+o_u seq
+o_t texp2
+o_tsq ex
+o_b 125
+o_b 10
+end
+
+fn conflict i ulong to void
+o_t tconf
+o_hold i
+o_b 125
+o_b 10
+o_flush
+put gx xsel 1
+o_t tpref
+o_t tconf2
+o_ar c_get i ctg c_get i ctgl
+o_t theld
+o_ar c_get i cag c_get i cagl
+o_b 32
+o_b 40
+o_id c_get i cid
+o_t tuntil
+o_tsq c_get i cexp
+o_b 58
+o_b 32
+o_ar c_get i cin c_get i cinl
+o_b 10
+e_flush
+exit 2
+end
+
+note holder of a conflicting active excl claim against (kind, target, agent), or ncl
+fn cl_clash kd ulong t ulong tl ulong a ulong al ulong to ulong
+for i ulong get gx xnc
+if c_act i
+if eq c_get i cmode 0
+if eq ar_eq c_get i cag c_get i cagl a al false
+if ne ov c_get i ckind c_get i ctg c_get i ctgl kd t tl 0
+ret i
+end
+end
+end
+end
+end
+ret ncl
+end
+
+fn ev_emit ln edit uchar * echo bool to void
+n = ev_build ln
+pend_add ln n
+if echo
+ret
+end
+pe_flush false
+end
+
+fn cm_claim av edit uchar * ln edit uchar * to void
+ag = op_sf av oag mmagent
+agl = get gop add oag 1
+se = op_sf av ose mmsess
+if eq op_has otg false
+die 64 mmtg
+end
+t = tg_canon av get gop otg get gop add otg 1
+if eq t tbad
+die 64 mmtg
+end
+put gev etg t
+put gev etgl get gx xpos
+put gev ekind get gx xkind
+put gev ettl op_ttl av
+md = ulong 0
+if eq get gx xkind 0
+md = 1
+end
+if op_has omode
+md = op_word av omode 18 2
+end
+put gev emode md
+put gev est 0
+if op_has ost
+put gev est op_word av ost 5 8
+end
+put gev ein op_intent av
+put gev einl get gx xpos
+put gev eev op_evid av
+put gev eevl get gx xpos
+put gev eor op_origin av
+put gev eorl get gx xpos
+put gev eag ag
+put gev eagl agl
+put gev ese se
+put gev esel get gop add ose 1
+put gev eop 0
+put gev eexp add get gx xnow get gev ettl
+lk_take 2
+ld_all ln
+if eq md 0
+h = cl_clash get gev ekind get gev etg get gev etgl ag agl
+if and ne h ncl eq op_has oimp false
+conflict h
+end
+end
+ev_emit ln false
+o_ok get gev eid get gx xseq get gev eexp
+end
+
+note cl_mine: claim index for --id held by --agent (exit 4 otherwise)
+fn cl_mine av edit uchar * to ulong
+if eq op_has oid false
+die 64 mmid
+end
+ag = op_sf av oag mmagent
+o = get gop oid
+n = get gop add oid 1
+if ne n 16
+die 4 mnf
+end
+for i ulong 16
+if eq hexv get av add o i 16
+die 4 mnf
+end
+end
+c = ht_find hx_u av o
+if eq c ncl
+die 4 mnf
+end
+if eq ar_eq c_get c cag c_get c cagl ag get gop add oag 1 false
+die 4 mnh
+end
+if ne c_get c cclo 0
+die 4 mna
+end
+ret c
+end
+
+fn ev_from i ulong to void
+put gev eid c_get i cid
+put gev eag c_get i cag
+put gev eagl c_get i cagl
+put gev ese c_get i cse
+put gev esel c_get i csel
+put gev ekind c_get i ckind
+put gev etg c_get i ctg
+put gev etgl c_get i ctgl
+put gev emode c_get i cmode
+put gev est c_get i cst
+put gev ein c_get i cin
+put gev einl c_get i cinl
+put gev ettl 0
+put gev eexp c_get i cexp
+put gev eev 0
+put gev eevl 0
+end
+
+note cm_hold: renew (op 1), release (op 2), state (op 3)
+fn cm_hold av edit uchar * ln edit uchar * op ulong to void
+ttl = ulong 0
+if eq op 1
+ttl = op_ttl av
+end
+if and eq op 3 eq op_has ost false
+die 64 mmst
+end
+stc = tbad
+if op_has ost
+stc = op_word av ost 5 8
+end
+ev = op_evid av
+evl = get gx xpos
+orr = op_origin av
+orl = get gx xpos
+lk_take 2
+ld_all ln
+i = cl_mine av
+if and eq op 1 le c_get i cexp get gx xnow
+die 4 mna
+end
+ev_from i
+put gev eop op
+put gev eor orr
+put gev eorl orl
+put gev eev ev
+put gev eevl evl
+if ne stc tbad
+put gev est stc
+end
+if eq op 1
+put gev ettl ttl
+put gev eexp add get gx xnow ttl
+end
+if eq op 2
+put gev eexp get gx xnow
+end
+ev_emit ln false
+o_ok get gev eid get gx xseq get gev eexp
+end
+
+fn cm_who av edit uchar * ln edit uchar * to void
+if eq op_has opos false
+die 64 mmtg
+end
+t = tg_canon av get gop opos get gop add opos 1
+if eq t tbad
+die 64 mmtg
+end
+kd = get gx xkind
+tl = get gx xpos
+lk_take 1
+ld_all ln
+for i ulong get gx xnc
+if c_act i
+if ne ov c_get i ckind c_get i ctg c_get i ctgl kd t tl 0
+o_claim i
+o_b 10
+end
+end
+end
+end
+
+note agent prefix filter: agent == P or starts with P "."
+fn apf_ok av edit uchar * i ulong to bool
+if eq op_has oapf false
+ret true
+end
+o = get gop oapf
+n = get gop add oapf 1
+a = c_get i cag
+al = c_get i cagl
+if lt al n
+ret false
+end
+for k ulong n
+if ne get gar add a k get av add o k
+ret false
+end
+end
+if eq al n
+ret true
+end
+ret eq get gar add a n 46
+end
+
+fn cm_list av edit uchar * ln edit uchar * to void
+lk_take 1
+ld_all ln
+all = op_has oall
+for i ulong get gx xnc
+if or all c_act i
+if apf_ok av i
+o_claim i
+o_b 10
+end
+end
+end
+end
+
+fn cm_conf ln edit uchar * to void
+lk_take 1
+ld_all ln
+found = false
+nc = get gx xnc
+for i ulong nc
+if c_act i
+if eq c_get i cmode 0
+for j ulong sub nc add i 1
+k = add add i j 1
+if c_act k
+if eq c_get k cmode 0
+if eq ar_eq c_get i cag c_get i cagl c_get k cag c_get k cagl false
+r = ov c_get i ckind c_get i ctg c_get i ctgl c_get k ckind c_get k ctg c_get k ctgl
+if ne r 0
+found = true
+o_t ta
+o_claim i
+o_t tb
+o_claim k
+o_t treas
+o_wd wreason sub r 1
+o_q
+o_b 125
+o_b 10
+end
+end
+end
+end
+end
+end
+end
+end
+if found
+o_flush
+exit 1
+end
+end
+
+fn cm_expire av edit uchar * ln edit uchar * to void
+ag = ulong 0
+agl = ulong 0
+if op_has oag
+ag = op_sf av oag mmagent
+agl = get gop add oag 1
+else
+ag = ar_t tdefag
+agl = len tdefag
+end
+orr = ar_t tcli
+orl = len tcli
+pst = ar_t tpulse
+if ar_eq ag agl pst len tpulse
+orr = pst
+orl = len tpulse
+end
+lk_take 2
+ld_all ln
+for i ulong get gx xnc
+if eq c_get i cclo 0
+if le c_get i cexp get gx xnow
+ev_from i
+put gev eop 4
+put gev eag ag
+put gev eagl agl
+put gev eor orr
+put gev eorl orl
+n = ev_build ln
+pend_add ln n
+c_put i cclo 2
+if eq pe_room false
+pe_flush true
+end
+end
+end
+end
+pe_flush true
+end
+
+note read a small file (whole) into gso; returns its length
+fn rd_small off ulong n ulong to ulong
+fd = fopen gpth off n 524288 0
+if lt fd 0
+die 70 mpub
+end
+k = read int fd gso 0 4096
+c = fclose int fd
+if le k 0
+die 70 mpub
+end
+ret ulong k
+end
+
+fn cm_init to void
+a = faccess gpth get gx xpkey get gx xpkeyl 0
+if ne a 0
+si_open
+pk_reset
+pk_g get gx xsig get gx xsigl
+pk_t tkeyg
+pk_g get gx xpkd get gx xpkdl
+r = si_run
+if ne r 0
+die 70 mkeyg
+end
+end
+n = rd_small get gx xppub get gx xppubl
+if eq get gso sub n 1 10
+n = sub n 1
+end
+if lt n len tdid
+die 70 mpub
+end
+for i ulong n
+c = get gso i
+if or or lt c 33 gt c 126 or eq c 34 eq c 92
+die 70 mpub
+end
+end
+o_t tokpub
+for j ulong n
+o_b get gso j
+end
+o_b 34
+o_b 125
+o_b 10
+end
+
+fn v_fail seq ulong why ulong to void
+o_t tvbad
+o_u seq
+o_t terr2
+o_wd wwhy why
+o_b 34
+o_b 125
+o_b 10
+o_flush
+exit 3
+end
+
+note vf_line: full check of one line k (= expected seq). 0 ok, else wwhy index + 1.
+fn vf_line ln edit uchar * n ulong to ulong
+r = ld_line ln n
+if ne r 0
+ret r
+end
+hp = get gp qhpos
+ev_hash ln hp
+for i ulong 64
+if ne get ln add add hp 9 i get glh i
+ret 4
+end
+end
+if eq get gp qop 0
+q = get gp qid
+for j ulong 16
+put gst j get ln add q j
+put ln add q j 48
+end
+ev_hash ln hp
+for k ulong 16
+if ne get ln add add hp 9 k get gst k
+ret 5
+end
+end
+end
+for a ulong 64
+si_b get glh a
+end
+si_b 32
+s = get gp qsig
+for b ulong 128
+si_b get ln add s b
+end
+si_b 10
+ret 0
+end
+
+note vf_sigs: verify the staged `hash sig` lines; a bad line K sets gx[xbad] = K
+fn vf_sigs to void
+put gx xbad 0
+good = get gx xevn
+if eq good 0
+x = fclose int get gx xmfd
+ret
+end
+pk_reset
+pk_g get gx xsig get gx xsigl
+pk_t tver
+pk_g get gx xppub get gx xppubl
+r = si_run
+n = get gx xson
+if lt n 4
+die 70 mverb
+end
+if and eq r 0 eq get gso 0 111
+ret
+end
+if ne r 3
+die 70 mverb
+end
+v = ulong 0
+for i ulong sub n 4
+c = get gso add i 4
+if or lt c 48 gt c 57
+break
+end
+v = add mul v 10 ulong sub c 48
+end
+if or eq v 0 gt v good
+die 70 mverb
+end
+put gx xbad v
+end
+fn cm_verify ln edit uchar * to void
+lk_take 1
+ld_reset
+fail = ulong 0
+why = ulong 0
+k = ulong 0
+fd = ld_open
+if ge fd 0
+si_open
+r_open fd
+while true bound 999999
+n = r_line ln
+if eq n -1
+break
+end
+k = add k 1
+if eq n -3
+die 70 mio
+end
+if lt n 0
+fail = k
+break
+end
+r = vf_line ln ulong n
+if ne r 0
+fail = k
+why = sub r 1
+break
+end
+end
+c = fclose int fd
+if eq k 0
+x = fclose int get gx xmfd
+end
+if gt k 0
+vf_sigs
+end
+end
+if gt get gx xbad 0
+v_fail get gx xbad 5
+end
+if gt fail 0
+v_fail fail why
+end
+o_t tvok
+o_u get gx xevn
+o_t thead
+for i ulong 64
+o_b get glh i
+end
+o_b 34
+o_b 125
+o_b 10
+end
+

@@ -1,9 +1,292 @@
-fn main to int
-ln = new uchar 65536 0
-n = argread 0 ln 0 65536
-ok = pl_line ln ulong n
-if ok
-ret 0
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Argument parsing, home / path resolution, dispatch.
+note av layout: [0, 65536) argument bytes, [65536, 131072) scratch (environment entries, cwd, readlnk).
+
+text eahome "AIEN_COORD_HOME="
+text ehome "HOME="
+text sdefh "/.local/state/aien-coord"
+text sled "/claims.jsonl"
+text slk "/claims.lock"
+text skd "/keys"
+text skey "/keys/ledger.key"
+text spub "/keys/ledger.pub"
+text ssig "/synapse-claims-sig"
+text sself "/proc/self/exe"
+text mnohome "no home: pass --home or set AIEN_COORD_HOME or HOME"
+text mopt "unknown option"
+text mval "option needs a value"
+text mnow "invalid --now (YYYY-MM-DDTHH:MM:SSZ)"
+text mpath "path too long"
+text margs "arguments too long"
+text mcmd "unknown command"
+text mextra "unexpected argument"
+text mself "cannot locate synapse-claims-sig; pass --sig-bin"
+
+note ======== gpth path builder (append at gx xlp) ========
+
+fn pa_b c uchar to void
+p = get gx xlp
+if ge p 16384
+die 64 mpath
 end
-ret 1
+put gpth p c
+put gx xlp add p 1
+end
+
+fn pa_t t view uchar * to void
+for i ulong len t
+pa_b get t i
+end
+end
+
+fn pa_s s edit uchar * o ulong n ulong to void
+for i ulong n
+pa_b get s add o i
+end
+end
+
+note pa_mk: path = home ++ t; offset into slot, length into slot + 1
+fn pa_mk t view uchar * slot ulong to void
+st = get gx xlp
+for i ulong get gx xhomel
+pa_b get gpth add get gx xhome i
+end
+pa_t t
+put gx slot st
+put gx add slot 1 sub get gx xlp st
+end
+
+note env_find: environment entry starting with prefix t, copied to av[65536..); length or tbad
+fn env_find av edit uchar * t view uchar * to ulong
+for i ulong ulong envcnt
+n = envread i av 65536 65536
+if ge n 0
+k = ulong n
+if ge k len t
+m = true
+for j ulong len t
+if ne get av add 65536 j get t j
+m = false
+end
+end
+if m
+ret k
+end
+end
+end
+end
+ret tbad
+end
+
+note set_home: --home, else $AIEN_COORD_HOME, else $HOME/.local/state/aien-coord
+fn set_home av edit uchar * to void
+put gx xhome get gx xlp
+if op_has ohome
+o = get gop ohome
+n = get gop add ohome 1
+if eq n 0
+die 64 mnohome
+end
+pa_s av o n
+put gx xhomel n
+ret
+end
+k = env_find av eahome
+if and ne k tbad gt k len eahome
+pa_s av add 65536 len eahome sub k len eahome
+put gx xhomel sub k len eahome
+ret
+end
+h = env_find av ehome
+if or eq h tbad le h len ehome
+die 64 mnohome
+end
+pa_s av add 65536 len ehome sub h len ehome
+pa_t sdefh
+put gx xhomel sub get gx xlp get gx xhome
+end
+
+note set_sig: --sig-bin (made absolute against cwd) or <dir of /proc/self/exe>/synapse-claims-sig
+fn set_sig av edit uchar * to void
+st = get gx xlp
+if op_has osig
+o = get gop osig
+n = get gop add osig 1
+if eq n 0
+die 64 mself
+end
+if ne get av o 47
+c = cwd av 65536 4096
+if le c 1
+die 64 mself
+end
+pa_s av 65536 sub ulong c 1
+pa_b 47
+end
+pa_s av o n
+put gx xsig st
+put gx xsigl sub get gx xlp st
+ret
+end
+r = readlnk sself 0 len sself av 65536 4096
+if or le r 0 ge r 4096
+die 70 mself
+end
+e = ulong r
+while gt e 0 bound 4097
+if eq get av add 65536 sub e 1 47
+break
+end
+e = sub e 1
+end
+if eq e 0
+die 70 mself
+end
+pa_s av 65536 sub e 1
+pa_t ssig
+put gx xsig st
+put gx xsigl sub get gx xlp st
+end
+
+note parse: read argv into av and fill gop / gevl
+fn parse av edit uchar * to void
+for s ulong 34
+put gop s tbad
+end
+put gop oevn 0
+na = ulong argcnt
+p = ulong 0
+pend = tbad
+i = ulong 1
+while lt i na bound 100000
+n = argread i av p sub 65536 p
+if lt n 0
+die 64 margs
+end
+k = ulong n
+if ne pend tbad
+if eq pend oev
+c = get gop oevn
+if ge c 256
+die 64 mmev
+end
+put gevl mul c 2 p
+put gevl add mul c 2 1 k
+put gop oevn add c 1
+else
+put gop pend p
+put gop add pend 1 k
+end
+pend = tbad
+p = add p k
+i = add i 1
+continue
+end
+dash = false
+if gt k 1
+if and eq get av p 45 eq get av add p 1 45
+dash = true
+end
+end
+if dash
+w = tw_find part av p k wflags 0 15
+if eq w tbad
+die 64 mopt
+end
+if eq w 13
+put gop oall 0
+else
+if eq w 14
+pend = oapf
+else
+pend = mul w 2
+end
+end
+else
+if eq get gop ocmd tbad
+c2 = tw_find part av p k wcmds 0 10
+if eq c2 tbad
+die 64 mcmd
+end
+put gop ocmd c2
+else
+if ne get gop opos tbad
+die 64 mextra
+end
+put gop opos p
+put gop add opos 1 k
+end
+end
+p = add p k
+i = add i 1
+end
+if ne pend tbad
+die 64 mval
+end
+if eq get gop ocmd tbad
+die 64 musage
+end
+end
+
+fn set_now av edit uchar * to void
+if op_has onow
+if ne get gop add onow 1 20
+die 64 mnow
+end
+t = ts_parse av get gop onow
+if eq t tbad
+die 64 mnow
+end
+put gx xnow t
+ret
+end
+put gx xnow ulong div realns 1000000000
+end
+
+fn main to int
+av = new uchar 131072 0
+ln = new uchar 65536 0
+put gx xlp 0
+parse av
+set_now av
+set_home av
+pa_mk sled xpled
+pa_mk slk xplk
+pa_mk skd xpkd
+pa_mk skey xpkey
+pa_mk spub xppub
+set_sig av
+c = get gop ocmd
+if eq c 0
+cm_init
+end
+if eq c 1
+cm_claim av ln
+end
+if eq c 2
+cm_hold av ln 1
+end
+if eq c 3
+cm_hold av ln 2
+end
+if eq c 4
+cm_hold av ln 3
+end
+if eq c 5
+cm_who av ln
+end
+if eq c 6
+cm_list av ln
+end
+if eq c 7
+cm_conf ln
+end
+if eq c 8
+cm_verify ln
+end
+if eq c 9
+cm_expire av ln
+end
+o_flush
+ret 0
 end

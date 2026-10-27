@@ -105,7 +105,7 @@ end
 if ge k n
 ret tbad
 end
-w = tw_find s o k wall 13 5
+w = tw_find part s o k wall 13 5
 if eq w tbad
 ret tbad
 end

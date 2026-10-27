@@ -225,7 +225,7 @@ fn sc_word s edit uchar * base ulong cnt ulong to ulong
 if eq sc_sf s false
 ret tbad
 end
-ret tw_find s get gp pso get gp psl wall base cnt
+ret tw_find part s get gp pso get gp psl wall base cnt
 end
 
 fn sc_ts s edit uchar * to ulong

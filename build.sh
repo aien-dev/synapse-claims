@@ -24,11 +24,19 @@ have_omc=$(sha256sum "$src/seed/out/omc" | cut -d' ' -f1)
 unit=$out.unit.om
 { printf 'om2\n'; cat "$src/om/tls/sha2.om" "$here"/src/*.om; } > "$unit"
 rm -f "$out"
-if ! "$src/seed/out/omc" < "$unit" > "$out.tmp"; then
+if ! "$src/seed/out/omc" < "$unit" > "$out.tmp" 2> "$out.err"; then
+  cat "$out.err" >&2
   rm -f "$out.tmp"
   echo "build.sh: omc rejected $unit" >&2
+  # show the rejected unit line with its source file and line, so CI logs are self-contained
+  bad=$(sed -n 's/^omc: line \([0-9][0-9]*\):.*/\1/p' "$out.err" | head -n 1)
+  if [ -n "$bad" ] && [ "$bad" -gt 1 ]; then
+    awk -v want=$((bad - 1)) 'NR==want{print "build.sh: unit line " want+1 " is " FILENAME ":" FNR ": " $0; exit}' \
+      "$src/om/tls/sha2.om" "$here"/src/*.om >&2
+  fi
   exit 1
 fi
+rm -f "$out.err"
 chmod 755 "$out.tmp"
 mv "$out.tmp" "$out"
 echo "build.sh: built $out" >&2

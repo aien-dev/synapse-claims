@@ -92,7 +92,7 @@ note wall: ops 0..4 (code-1), states 5..12 (code+4), kinds 13..17 (code+12), mod
 text wall "claim renew release state expire PROPOSED IMPLEMENTED EXERCISED QUALIFIED MERGED DEPLOYED NOT_RUN BLOCKED repo branch path pr ext excl shared"
 text wreason "same_target repo_covers path_overlap ext_casefold"
 text wcmds "init claim renew release state who list conflicts verify expire"
-text wflags "--home --now --sig-bin --agent --session --target --ttl --mode --state --intent --evidence --import --id --all --text"
+text wflags "--home --now --sig-bin --agent --session --target --ttl --mode --state --intent --evidence --import --id --all --agent-prefix"
 text wwhy "malformed seq prev hash id signature"
 
 text tpref "synapse-claims: "
@@ -131,8 +131,10 @@ end
 ret sub e s
 end
 
-note tw_find: index of the word in t[base .. base+cnt) equal to s[o .. o+l), or tbad
-fn tw_find s edit uchar * o ulong l ulong t view uchar * base ulong cnt ulong to ulong
+note tw_find: index of the word in t[base .. base+cnt) equal to s (whole slice), or tbad
+fn tw_find s edit uchar * t view uchar * base ulong cnt ulong to ulong
+l = len s
+o = ulong 0
 for k ulong cnt
 w = add base k
 p = tw_off t w
@@ -347,7 +349,8 @@ ret 16
 end
 
 note sf_ok: 1..256 bytes, each 0x21..0x7e except quote and backslash (identifiers, targets, URLs)
-fn sf_ok s edit uchar * n ulong to bool
+fn sf_ok s edit uchar * to bool
+n = len s
 if or eq n 0 gt n 256
 ret false
 end

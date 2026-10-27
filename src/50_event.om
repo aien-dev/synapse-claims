@@ -1,0 +1,321 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Event serialisation, hashing, batched signing through synapse-claims-sig, and the locked append.
+
+text mkid "AIEN_CLAIMS_EVENT_V1\n"
+text tbrace "}"
+text msig "signing failed (synapse-claims-sig)"
+text mapp "ledger append failed"
+text mlock "lock failed"
+text mhome "home not initialised; run init"
+text tsign "sign"
+text tver "verify"
+text tkeyg "keygen"
+
+note gev cells: the event being built
+const eop ulong 0
+const eid ulong 1
+const eag ulong 2
+const eagl ulong 3
+const ese ulong 4
+const esel ulong 5
+const ekind ulong 6
+const etg ulong 7
+const etgl ulong 8
+const emode ulong 9
+const ettl ulong 10
+const eexp ulong 11
+const est ulong 12
+const ein ulong 13
+const einl ulong 14
+const eev ulong 15
+const eevl ulong 16
+const eor ulong 17
+const eorl ulong 18
+const eidp ulong 19
+
+note ======== line writer: s[gx xlp ..] ========
+
+fn l_b s edit uchar * c uchar to void
+p = get gx xlp
+put s p c
+put gx xlp add p 1
+end
+
+fn l_t s edit uchar * t view uchar * to void
+for i ulong len t
+l_b s get t i
+end
+end
+
+fn l_ar s edit uchar * off ulong n ulong to void
+for i ulong n
+l_b s get gar add off i
+end
+end
+
+fn l_arq s edit uchar * off ulong n ulong to void
+l_b s 34
+l_ar s off n
+l_b s 34
+end
+
+fn l_u s edit uchar * v ulong to void
+x = v
+k = ulong 0
+for i ulong 20
+put gst i uchar add 48 rem x 10
+x = div x 10
+k = add k 1
+if eq x 0
+break
+end
+end
+for j ulong k
+l_b s get gst sub sub k j 1
+end
+end
+
+fn l_ts s edit uchar * v ulong to void
+ts_fmt v
+l_b s 34
+for i ulong 20
+l_b s get gtb i
+end
+l_b s 34
+end
+
+fn l_wd s edit uchar * w ulong to void
+l_b s 34
+p = tw_off wall w
+for i ulong tw_len wall w
+l_b s get wall add p i
+end
+l_b s 34
+end
+
+fn l_id s edit uchar * v ulong to void
+for i ulong 16
+l_b s hexd and shr v sub 60 mul i 4 15
+end
+end
+
+note ev_hash: sha256(tag ++ s[0..hp) ++ "}") as lowercase hex into s[hp+9 .. hp+73)
+fn ev_hash s edit uchar * hp ulong to void
+c = new ulong 40 0
+d = new uchar 32 0
+sha256_init c
+sha256_update c mkid
+sha256_update c view part s 0 hp
+sha256_update c tbrace
+sha256_final c d
+q = add hp 9
+for i ulong 32
+put s add q mul i 2 hexd ulong shr get d i 4
+put s add add q mul i 2 1 hexd ulong and get d i 15
+end
+end
+
+note ev_body: writes the event body (through prev) at s[0..); returns hp. seq = xseq + 1.
+fn ev_body s edit uchar * to ulong
+put gx xlp 0
+l_t s kv
+l_u s add get gx xseq 1
+l_t s kts
+l_ts s get gx xnow
+l_t s kop
+l_wd s get gev eop
+l_t s kid
+l_b s 34
+put gev eidp get gx xlp
+l_id s get gev eid
+l_b s 34
+l_t s kag
+l_arq s get gev eag get gev eagl
+l_t s kse
+l_arq s get gev ese get gev esel
+l_t s kkind
+l_wd s add get gev ekind 13
+l_t s ktg
+l_arq s get gev etg get gev etgl
+l_t s kmode
+l_wd s add get gev emode 18
+l_t s kttl
+l_u s get gev ettl
+l_t s kexp
+l_ts s get gev eexp
+l_t s kst
+l_wd s add get gev est 5
+l_t s kin
+l_arq s get gev ein get gev einl
+l_t s kev
+l_ar s get gev eev get gev eevl
+l_b s 93
+l_t s kor
+l_arq s get gev eor get gev eorl
+l_t s kprev
+l_b s 34
+for i ulong 64
+l_b s get glh i
+end
+l_b s 34
+ret get gx xlp
+end
+
+note ev_build: complete line (sig = 128 zeros, patched at flush); for op=claim the id is the first 16
+note hex of the hash of the body with id 0000000000000000. Returns the line length.
+fn ev_build s edit uchar * to ulong
+if eq get gev eop 0
+put gev eid 0
+end
+hp = ev_body s
+put gx xlp hp
+l_t s khash
+l_b s 34
+for i ulong 64
+l_b s 48
+end
+l_t s ksig
+l_b s 34
+for j ulong 128
+l_b s 48
+end
+l_b s 34
+l_b s 125
+n = get gx xlp
+if eq get gev eop 0
+ev_hash s hp
+put gev eid hx_u s add hp 9
+p = get gev eidp
+for k ulong 16
+put s add p k get s add add hp 9 k
+end
+end
+ev_hash s hp
+ret n
+end
+
+note ======== pending batch (gpend, ends in gpe) ========
+
+fn pend_add s edit uchar * n ulong to void
+p = get gx xpen
+k = get gx xpec
+if or gt add add p n 1 pecap ge k 8192
+die 70 mapp
+end
+for i ulong n
+put gpend add p i get s i
+end
+put gpend add p n 10
+e = add add p n 1
+put gpe k e
+put gx xpen e
+put gx xpec add k 1
+h = sub e 204
+for j ulong 64
+put glh j get gpend add h j
+end
+put gx xseq add get gx xseq 1
+end
+
+fn pe_room to bool
+if ge get gx xpec 8192
+ret false
+end
+ret le add get gx xpen 70000 pecap
+end
+
+fn pk_g off ulong n ulong to void
+p = pk_rec n
+for i ulong n
+put gpk add p i get gpth add off i
+end
+end
+
+note pe_flush: sign every pending hash in one helper run, patch the signatures, then append each line
+note with a single write() and fdsync. echo true also prints each appended line on stdout.
+fn pe_flush echo bool to void
+k = get gx xpec
+if eq k 0
+ret
+end
+si_open
+for i ulong k
+h = sub get gpe i 204
+for j ulong 64
+si_b get gpend add h j
+end
+si_b 10
+end
+pk_reset
+pk_g get gx xsig get gx xsigl
+pk_t tsign
+pk_g get gx xpkey get gx xpkeyl
+r = si_run
+if ne r 0
+die 70 msig
+end
+if ne get gx xson mul k 129
+die 70 msig
+end
+for a ulong k
+sp = sub get gpe a 131
+for b ulong 128
+c = get gso add mul a 129 b
+if eq hexv c 16
+die 70 msig
+end
+put gpend add sp b c
+end
+if ne get gso add mul a 129 128 10
+die 70 msig
+end
+end
+fd = fopen gpth get gx xpled get gx xpledl 525377 420
+if lt fd 0
+die 70 mapp
+end
+st = ulong 0
+for e ulong k
+en = get gpe e
+p = st
+while lt p en bound 999999
+w = write int fd gpend p sub en p
+if le w 0
+die 70 mapp
+end
+p = add p ulong w
+end
+if echo
+for x ulong sub en st
+o_b get gpend add st x
+end
+end
+st = en
+end
+y = fdsync int fd
+if ne y 0
+die 70 mapp
+end
+z = fclose int fd
+put gx xpen 0
+put gx xpec 0
+end
+
+note lk_take: open claims.lock and flock it (1 shared, 2 exclusive); held until exit
+fn lk_take op int to void
+fd = fopen gpth get gx xplk get gx xplkl 524354 420
+if eq fd -2
+if eq op 1
+ret
+end
+die 70 mhome
+end
+if lt fd 0
+die 70 mlock
+end
+r = flock int fd op
+if ne r 0
+die 70 mlock
+end
+put gx xlkfd ulong fd
+end
