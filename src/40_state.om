@@ -1,0 +1,601 @@
+note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+note Claim table, id hash table, target canonical form, overlap rules, ledger loader/checker and the
+note list / holder JSON writers.
+
+note claim cells (nf per claim in gcl)
+const cid ulong 0
+const cag ulong 1
+const cagl ulong 2
+const cse ulong 3
+const csel ulong 4
+const ckind ulong 5
+const ctg ulong 6
+const ctgl ulong 7
+const cmode ulong 8
+const cst ulong 9
+const cin ulong 11
+const cinl ulong 12
+const cexp ulong 13
+const csince ulong 14
+const cseq ulong 15
+const cor ulong 16
+const corl ulong 17
+const cev ulong 18
+const cevl ulong 19
+const cclo ulong 20
+
+text mnf "not found"
+text mnh "not holder"
+text mna "not active"
+text mchain "ledger integrity failure; run verify"
+text mtab "claim table full"
+text mio "ledger read error"
+
+fn c_get i ulong f ulong to ulong
+ret get gcl add mul i nf f
+end
+
+fn c_put i ulong f ulong v ulong to void
+put gcl add mul i nf f v
+end
+
+note ======== id hash table: key = 16-hex id as ulong, value = claim index + 1 ========
+
+fn ht_slot k ulong to ulong
+p = and k htmask
+while true bound 270000
+v = get ght p
+if eq v 0
+ret p
+end
+if eq get ghk p k
+ret p
+end
+p = and add p 1 htmask
+end
+ret 0
+end
+
+fn ht_find k ulong to ulong
+p = ht_slot k
+v = get ght p
+if eq v 0
+ret ncl
+end
+ret sub v 1
+end
+
+note ht_put: false when the key is already present
+fn ht_put k ulong i ulong to bool
+p = ht_slot k
+if ne get ght p 0
+ret false
+end
+put ght p add i 1
+put ghk p k
+ret true
+end
+
+note hex16 of s[o..o+16) -> ulong (input already checked lowercase hex)
+fn hx_u s edit uchar * o ulong to ulong
+v = ulong 0
+for i ulong 16
+v = or shl v 4 hexv get s add o i
+end
+ret v
+end
+
+fn o_id v ulong to void
+for i ulong 16
+o_b hexd and shr v sub 60 mul i 4 15
+end
+end
+
+note ======== targets ========
+
+note kind code (0 repo 1 branch 2 path 3 pr 4 ext) of the kind word before the first ':', or tbad
+fn tg_kind s edit uchar * o ulong n ulong to ulong
+k = ulong 0
+while lt k n bound 300
+if eq get s add o k 58
+break
+end
+k = add k 1
+end
+if ge k n
+ret tbad
+end
+w = tw_find s o k wall 13 5
+if eq w tbad
+ret tbad
+end
+ret sub w 13
+end
+
+fn rp_ch c uchar to bool
+if and ge c 97 le c 122
+ret true
+end
+if and ge c 48 le c 57
+ret true
+end
+ret or or eq c 46 eq c 95 eq c 45
+end
+
+note tg_canon: canonical copy of target s[o..o+n) appended to the arena; returns its offset (length
+note in gx[xpos]) and the kind in gx[xkind]; tbad (arena unchanged) when the target is invalid.
+fn tg_canon s edit uchar * o ulong n ulong to ulong
+if eq sf_ok part s o n false
+ret tbad
+end
+kd = tg_kind s o n
+if eq kd tbad
+ret tbad
+end
+put gx xkind kd
+st = get gx xarn
+w = tw_len wall add kd 13
+i = add w 1
+ar_ln s o i
+if eq kd 4
+scl = ulong 0
+while lt i n bound 300
+c = lower get s add o i
+if eq c 58
+break
+end
+if eq or rp_ch c eq c 43 false
+put gx xarn st
+ret tbad
+end
+ar_b c
+scl = add scl 1
+i = add i 1
+end
+if or or eq scl 0 ge i n eq add i 1 n
+put gx xarn st
+ret tbad
+end
+ar_ln s add o i sub n i
+put gx xpos sub get gx xarn st
+ret st
+end
+sl = ulong 0
+rl = ulong 0
+while lt i n bound 300
+c = lower get s add o i
+if or eq c 35 eq c 58
+break
+end
+if eq c 47
+sl = add sl 1
+if or eq rl 0 eq get s add o sub i 1 47
+put gx xarn st
+ret tbad
+end
+else
+if eq rp_ch c false
+put gx xarn st
+ret tbad
+end
+end
+ar_b c
+rl = add rl 1
+i = add i 1
+end
+if or ne sl 1 eq get s add o sub i 1 47
+put gx xarn st
+ret tbad
+end
+if eq kd 0
+if lt i n
+put gx xarn st
+ret tbad
+end
+put gx xpos sub get gx xarn st
+ret st
+end
+if ge add i 1 n
+put gx xarn st
+ret tbad
+end
+c = get s add o i
+if and eq kd 2 ne c 58
+put gx xarn st
+ret tbad
+end
+if and ne kd 2 ne c 35
+put gx xarn st
+ret tbad
+end
+if eq kd 3
+for j ulong sub sub n i 1
+d = get s add add o i add j 1
+if or lt d 48 gt d 57
+put gx xarn st
+ret tbad
+end
+end
+end
+ar_ln s add o i sub n i
+put gx xpos sub get gx xarn st
+ret st
+end
+
+note end of the owner/repo part of arena target t (kind code k, kind word skipped)
+fn tg_rend k ulong t ulong n ulong to ulong
+i = add tw_len wall add k 13 1
+while lt i n bound 300
+c = get gar add t i
+if or eq c 35 eq c 58
+ret i
+end
+i = add i 1
+end
+ret n
+end
+
+note literal prefix (bytes before the first '*') length of the glob part from offset g
+fn gl_pre t ulong g ulong n ulong to ulong
+i = g
+while lt i n bound 300
+if eq get gar add t i 42
+ret sub i g
+end
+i = add i 1
+end
+ret sub n g
+end
+
+note ov: overlap reason of two canonical arena targets: 0 none 1 same_target 2 repo_covers
+note 3 path_overlap 4 ext_casefold
+fn ov ka ulong ta ulong la ulong kb ulong tb ulong lb ulong to ulong
+if or eq ka 4 eq kb 4
+if ne ka kb
+ret 0
+end
+if ar_eq ta la tb lb
+ret 1
+end
+if ar_eqci ta la tb lb
+ret 4
+end
+ret 0
+end
+if ar_eq ta la tb lb
+ret 1
+end
+ea = tg_rend ka ta la
+eb = tg_rend kb tb lb
+sa = add tw_len wall add ka 13 1
+sb = add tw_len wall add kb 13 1
+if eq ar_eq add ta sa sub ea sa add tb sb sub eb sb false
+ret 0
+end
+if or eq ka 0 eq kb 0
+ret 2
+end
+if or ne ka 2 ne kb 2
+ret 0
+end
+pa = gl_pre ta add ea 1 la
+pb = gl_pre tb add eb 1 lb
+m = pa
+if lt pb m
+m = pb
+end
+if ar_eq add ta add ea 1 m add tb add eb 1 m
+ret 3
+end
+ret 0
+end
+
+fn c_act i ulong to bool
+if ne c_get i cclo 0
+ret false
+end
+ret gt c_get i cexp get gx xnow
+end
+
+note ======== ledger loading ========
+
+note paths (filled by main): gpth holds home-relative strings; gx[xpled]/gx[xpledl] etc. index it
+global gpth uchar 16384
+
+fn ar_eqs a ulong an ulong s edit uchar * o ulong n ulong to bool
+if ne an n
+ret false
+end
+for i ulong n
+if ne get gar add a i get s add o i
+ret false
+end
+end
+ret true
+end
+
+note append the line's evidence (gp qev) to claim i's evidence, joined by ',', capped at evcap
+fn ld_ev i ulong s edit uchar * to void
+n = get gp qevl
+if eq n 0
+ret
+end
+ol = c_get i cevl
+add1 = ulong 0
+if gt ol 0
+add1 = 1
+end
+if gt add add ol add1 n evcap
+ret
+end
+st = get gx xarn
+ar_cp c_get i cev ol
+if gt ol 0
+ar_b 44
+end
+ar_ln s get gp qev n
+c_put i cev st
+c_put i cevl add add ol add1 n
+end
+
+note ld_apply: the scanned line s (gp cells) becomes claim state. 0 ok, 4 id error, 6 malformed.
+fn ld_apply s edit uchar * to ulong
+op = get gp qop
+id = hx_u s get gp qid
+kd = sub get gp qkind 13
+if eq op 0
+if ge get gx xnc ncl
+die 70 mtab
+end
+i = get gx xnc
+st = get gx xarn
+t = tg_canon s get gp qtg get gp qtgl
+if eq t tbad
+ret 6
+end
+if eq ar_eqs t get gx xpos s get gp qtg get gp qtgl false
+put gx xarn st
+ret 6
+end
+if ne get gx xkind kd
+put gx xarn st
+ret 6
+end
+if eq ht_put id i false
+put gx xarn st
+ret 4
+end
+put gx xnc add i 1
+c_put i cid id
+c_put i ckind kd
+c_put i ctg t
+c_put i ctgl get gp qtgl
+c_put i cag ar_ln s get gp qag get gp qagl
+c_put i cagl get gp qagl
+c_put i cse ar_ln s get gp qse get gp qsel
+c_put i csel get gp qsel
+c_put i cmode sub get gp qmode 18
+c_put i cst sub get gp qst 5
+c_put i cin ar_ln s get gp qin get gp qinl
+c_put i cinl get gp qinl
+c_put i cexp get gp qexp
+c_put i csince get gp qts
+c_put i cseq get gp qseq
+c_put i cor ar_ln s get gp qor get gp qorl
+c_put i corl get gp qorl
+c_put i cev ar_ln s get gp qev get gp qevl
+c_put i cevl get gp qevl
+c_put i cclo 0
+ret 0
+end
+i = ht_find id
+if eq i ncl
+ret 4
+end
+if ne c_get i cclo 0
+ret 6
+end
+if ne op 4
+if eq ar_eqs c_get i cag c_get i cagl s get gp qag get gp qagl false
+ret 6
+end
+end
+c_put i cseq get gp qseq
+c_put i cexp get gp qexp
+c_put i cst sub get gp qst 5
+if eq op 2
+c_put i cclo 1
+end
+if eq op 4
+c_put i cclo 2
+end
+ld_ev i s
+ret 0
+end
+
+note ld_line: chain checks against xseq / glh, then apply. 0 ok, else wwhy index + 1
+note (1 malformed, 2 seq, 3 prev, 5 id).
+fn ld_line s edit uchar * n ulong to ulong
+if eq pl_line s n false
+ret 1
+end
+if ne get gp qseq add get gx xseq 1
+ret 2
+end
+p = get gp qprev
+for i ulong 64
+if ne get s add p i get glh i
+ret 3
+end
+end
+r = ld_apply s
+if eq r 4
+ret 5
+end
+if eq r 6
+ret 1
+end
+h = get gp qhash
+for j ulong 64
+put glh j get s add h j
+end
+put gx xseq get gp qseq
+put gx xevn add get gx xevn 1
+ret 0
+end
+
+fn glh_zero to void
+for i ulong 64
+put glh i 48
+end
+end
+
+note ld_open: open the ledger read-only; absent -> -1
+fn ld_open to long
+fd = fopen gpth get gx xpled get gx xpledl 524288 0
+if eq fd -2
+ret -1
+end
+if lt fd 0
+die 70 mio
+end
+ret fd
+end
+
+fn ld_reset to void
+put gx xnc 0
+put gx xseq 0
+put gx xevn 0
+glh_zero
+for i ulong 262144
+put ght i 0
+end
+end
+
+note ld_all: load the whole ledger into the claim table (any failure: die 3)
+fn ld_all s edit uchar * to void
+ld_reset
+fd = ld_open
+if lt fd 0
+ret
+end
+r_open fd
+while true bound 999999
+n = r_line s
+if eq n -1
+break
+end
+if lt n 0
+die 3 mchain
+end
+if ne ld_line s ulong n 0
+die 3 mchain
+end
+end
+c = fclose int fd
+if ne get gx xreof 1
+die 70 mio
+end
+end
+
+note ======== JSON writers ========
+
+fn o_kq t view uchar * first bool to void
+o_key t first
+o_q
+end
+
+text jid "id"
+text jag "agent"
+text jse "session"
+text jkind "kind"
+text jtg "target"
+text jmode "mode"
+text jst "state"
+text jin "intent"
+text jexp "expires"
+text jact "active"
+text jsin "since"
+text jlseq "last_seq"
+text jor "origin"
+text jev "evidence"
+
+fn o_tsq s ulong to void
+o_q
+o_ts s
+o_q
+end
+
+fn o_arq off ulong n ulong to void
+o_q
+o_ar off n
+o_q
+end
+
+note the `list` object of claim i
+fn o_claim i ulong to void
+o_kq jid true
+o_id c_get i cid
+o_q
+o_key jag false
+o_arq c_get i cag c_get i cagl
+o_key jse false
+o_arq c_get i cse c_get i csel
+o_key jkind false
+o_q
+o_wd wall add c_get i ckind 13
+o_q
+o_key jtg false
+o_arq c_get i ctg c_get i ctgl
+o_key jmode false
+o_q
+o_wd wall add c_get i cmode 18
+o_q
+o_key jst false
+o_q
+o_wd wall add c_get i cst 5
+o_q
+o_key jin false
+o_arq c_get i cin c_get i cinl
+o_key jexp false
+o_tsq c_get i cexp
+o_key jact false
+if c_act i
+o_t ttrue
+else
+o_t tfalse
+end
+o_key jsin false
+o_tsq c_get i csince
+o_key jlseq false
+o_u c_get i cseq
+o_key jor false
+o_arq c_get i cor c_get i corl
+o_key jev false
+o_b 91
+o_ar c_get i cev c_get i cevl
+o_b 93
+o_b 125
+end
+
+note the conflict `holder` object of claim i
+fn o_hold i ulong to void
+o_kq jid true
+o_id c_get i cid
+o_q
+o_key jag false
+o_arq c_get i cag c_get i cagl
+o_key jse false
+o_arq c_get i cse c_get i csel
+o_key jtg false
+o_arq c_get i ctg c_get i ctgl
+o_key jmode false
+o_q
+o_wd wall add c_get i cmode 18
+o_q
+o_key jexp false
+o_tsq c_get i cexp
+o_key jin false
+o_arq c_get i cin c_get i cinl
+o_b 125
+end

@@ -1,6 +1,8 @@
 note SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 note Time (UTC civil <-> Unix seconds, days algorithms of H. Hinnant "chrono-Compatible Low-Level Date
 note Algorithms"), the bounded line reader, and the child-process runner for synapse-claims-sig.
+text mpk "argument packet too long"
+text mmemfd "memfd failure"
 
 note ======== time ========
 
@@ -304,5 +306,3 @@ c = fclose int get gx xmfd
 ret r
 end
 
-text mpk "argument packet too long"
-text mmemfd "memfd failure"

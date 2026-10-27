@@ -50,6 +50,7 @@ text kev ",\"evidence\":["
 text kor ",\"origin\":"
 text kprev ",\"prev\":"
 text khash ",\"hash\":"
+text tu00 "00"
 text ksig ",\"sig\":"
 
 fn sc_at s edit uchar * to ulong
@@ -194,7 +195,6 @@ end
 ret false
 end
 
-text tu00 "00"
 
 note sc_hex: quoted string of exactly k lowercase hex digits -> offset of first digit
 fn sc_hex s edit uchar * k ulong to ulong
