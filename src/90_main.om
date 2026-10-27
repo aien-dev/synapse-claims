@@ -1,0 +1,9 @@
+fn main to int
+ln = new uchar 65536 0
+n = argread 0 ln 0 65536
+ok = pl_line ln ulong n
+if ok
+ret 0
+end
+ret 1
+end

@@ -19,7 +19,10 @@ path = "src/main.rs"
 # (sha2 0.10.9 arrives through ed25519-dalek and is pinned by Cargo.lock; SHA-256 itself is om/tls/sha2.om).
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "fast"] }
 hex = "=0.4.3"
-synapse-core = { git = "https://github.com/aien-dev/synapse", rev = "099a980fedab8a6797bbf0358b8c5502c8045142" }
+# `../.synapse` is a symlink build.sh creates to a checkout of aien-dev/synapse at ../synapse.pin
+# (git-ignored; outside this workspace so synapse-core keeps its own workspace inheritance).
+# A path dependency keeps --offline builds and the lockfile identical everywhere.
+synapse-core = { path = "../.synapse/crates/synapse-core" }
 
 [profile.release]
 opt-level = 3

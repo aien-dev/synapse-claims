@@ -1,3 +1,6 @@
 sig/target/
 probe/
 /out/
+.synapse
+.synapse-src/
+omega-mv/

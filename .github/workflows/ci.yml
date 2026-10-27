@@ -1,0 +1,35 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pins
+        id: pins
+        run: |
+          echo "omega=$(sed -n 's|^aien-dev/omega-mv@||p' omega.pin)" >> "$GITHUB_OUTPUT"
+          echo "synapse=$(sed -n 's|^aien-dev/synapse@||p' synapse.pin)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: aien-dev/omega-mv
+          ref: ${{ steps.pins.outputs.omega }}
+          path: omega-mv
+      - uses: actions/checkout@v4
+        with:
+          repository: aien-dev/synapse
+          ref: ${{ steps.pins.outputs.synapse }}
+          path: .synapse-src
+      - name: Check omc pin
+        run: echo "$(sed -n 's|^omc-sha256 ||p' omega.pin)  omega-mv/seed/out/omc" | sha256sum -c
+      - name: Tests (builds synapse-claims and synapse-claims-sig, then runs every case)
+        env:
+          OMEGA_SRC: ${{ github.workspace }}/omega-mv
+          SYNAPSE_SRC: ${{ github.workspace }}/.synapse-src
+          TEST_ROOT: ${{ runner.temp }}/claims-tests
+        run: sh tests/run.sh
